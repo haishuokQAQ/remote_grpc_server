@@ -1,6 +1,7 @@
 package com.ulyssesk.remote_grpc.server;
 
 import com.ulyssesk.remote_grpc.grpc.DanmuConsumerServiceImpl;
+import com.ulyssesk.remote_grpc.server.kafka.Consumer;
 import io.grpc.BindableService;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
@@ -28,6 +29,14 @@ public class ConsumerServer {
         BindableService srv = new DanmuConsumerServiceImpl();
         server = serverBuilder.addService(srv).build();
     }
+    public ConsumerServer(int port, ServerBuilder<?> serverBuilder, BindableService srv) {
+        this.port = port;
+
+        //构造服务器，添加我们实际的服务
+
+        server = serverBuilder.addService(srv).build();
+    }
+
 
     private void start() throws IOException {
         server.start();
@@ -66,7 +75,17 @@ public class ConsumerServer {
         }else{
             addtionServer = new ConsumerServer(DEFAULT_PORT);
         }
-
+        Consumer.init("127.0.0.1:9092", "danmu");
+        final DanmuConsumerServiceImpl srv = new DanmuConsumerServiceImpl();
+        Consumer.runWithCallback(stringStringConsumerRecord -> {
+            try{
+                String content = stringStringConsumerRecord.value();
+                return srv.publishDanmu(content, "egame", "dys");
+            }catch (Exception e) {
+                e.printStackTrace();
+            }
+            return false;
+        });
         try {
             addtionServer.start();
             addtionServer.blockUntilShutdown();

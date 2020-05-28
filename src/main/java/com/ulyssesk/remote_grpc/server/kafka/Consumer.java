@@ -5,7 +5,6 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
 import java.time.Duration;
@@ -28,11 +27,19 @@ public class Consumer {
     }
 
 
-    public static void runWithCallback(java.util.function.Consumer<ConsumerRecord<String, String>> consumerFunction) {
+    public static void runWithCallback(java.util.function.Function<ConsumerRecord<String, String>, Boolean> consumerFunction) {
         while(true){
             ConsumerRecords<String,String> records = consumer.poll(Duration.ofMinutes(60));
             for(ConsumerRecord<String,String> record : records){
-                consumerFunction.accept(record);
+                Boolean result;
+                do {
+                    result = consumerFunction.apply(record);
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }while (!result);
             }
         }
     }

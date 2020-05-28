@@ -1,27 +1,33 @@
 package com.ulyssesk.remote_grpc.client;
 
+import com.mongodb.MongoClient;
+import com.ulyssesk.remote_grpc.dao.DanmuDao;
+import com.ulyssesk.remote_grpc.dao.impl.DanmuDaoImpl;
 import com.ulyssesk.remote_grpc.grpc.Danmu;
 import com.ulyssesk.remote_grpc.grpc.DanmuConsumerGrpc;
+import com.ulyssesk.remote_grpc.pojo.DanmuEntity;
+import com.ulyssesk.remote_grpc.utils.JacksonUtil;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.mongodb.MongoDbFactory;
+import org.springframework.data.mongodb.core.MongoTemplate;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.Random;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 public class ConsumerClient {
     private static final String DEFAULT_HOST = "localhost";
 
     private static final int DEFAULT_PORT = 8999;
-
-    private static final int VALUE_NUM = 10;
-
-    private static final int VALUE_UPPER_BOUND = 10;
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerClient.class);
 
@@ -41,18 +47,19 @@ public class ConsumerClient {
 
     /**
      * 实际调用部分
-     * @param nums 传到服务端的数据流
      */
-    public void getResult( List<Integer> nums){
+    public void getResult(DanmuDao danmuDao){
 
         //判断调用状态。在内部类中被访问，需要加final修饰
-        final CountDownLatch countDownLatch = new CountDownLatch(1);
 
         final StreamObserver<Danmu.DanmuResponse> responseObserver = new StreamObserver<Danmu.DanmuResponse>() {
             private int cnt = 0;
             public void onNext(Danmu.DanmuResponse result) {
                 //此处直接打印结果，其他也可用回调进行复杂处理
                 log.info("第{}次调用得到结果为:{}",++cnt,result);
+                String content = result.getContext();
+                DanmuEntity danmuEntity = JacksonUtil.readValue(content, DanmuEntity.class);
+                danmuDao.save(danmuEntity);
             }
 
             public void onError(Throwable throwable) {
@@ -82,53 +89,23 @@ public class ConsumerClient {
             }
         };
 
-        for(int num: nums){
-            Danmu.DanmuRequest value = Danmu.DanmuRequest.newBuilder().setResult(true).build();
-            requestObserver.onNext(value);
-
-            //判断调用结束状态。如果整个调用已经结束，继续发送数据不会报错，但是会被舍弃
-            if(countDownLatch.getCount() == 0){
-                return;
-            }
+        while (true) {
+            requestObserver.onNext(Danmu.DanmuRequest.newBuilder().setResult(true).build());
         }
-        //异步请求，无法确保onNext与onComplete的完成先后顺序
-        requestObserver.onCompleted();
-
-        try {
-            //如果在规定时间内没有请求完，则让程序停止
-            if(!countDownLatch.await(5, TimeUnit.MINUTES)){
-                log.warn("未在规定时间内完成调用");
-            }
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-
-
     }
 
 
-    public static void main(String[] args) {
-
-        ConsumerClient additionClient = new ConsumerClient(DEFAULT_HOST,DEFAULT_PORT);
-
-        //生成value值
-        List<Integer> list;
-        list = new ArrayList<Integer>();
-        Random random = new Random();
-
-        for(int i=0; i<VALUE_NUM; i++){
-            //随机数符合 0-VALUE_UPPER_BOUND 均匀分布
-            int value = random.nextInt(VALUE_UPPER_BOUND);
-
-//            System.out.println(i + ":" + value);
-
-            list.add(value);
-        }
-
-        System.out.println("*************************getting result from server***************************");
-        System.out.println();
-
-        additionClient.getResult(list);
+    public static void main(String[] args) throws Exception {
+        Properties properties = new Properties();
+        properties.load(new FileInputStream(new File("conf/consumer.properties")));
+        String remoteHost = properties.getProperty("remote.host");
+        String mongoHost = properties.getProperty("mongo.host");
+        ConsumerClient additionClient = new ConsumerClient(remoteHost,DEFAULT_PORT);
+        MongoClient mongoClient = new MongoClient(mongoHost);
+        MongoTemplate mongoTemplate = new MongoTemplate(mongoClient, "dys");
+        DanmuDaoImpl dao = new DanmuDaoImpl();
+        dao.setMongoTemplate(mongoTemplate);
+        additionClient.getResult(dao);
 
     }
 }
